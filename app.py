@@ -1,46 +1,95 @@
 import streamlit as st
 import requests
 
-st.set_page_config(page_title="NEXUS AI CFO • Binance MCP", page_icon="₿", layout="wide")
+st.set_page_config(page_title="NEXUS AI CFO", page_icon="₿", layout="wide")
 
 BINANCE_MCP = "https://agent.binance.com/mcp/agentic"
-BINANCE_API = "https://api.binance.com"
+
+# Binance provides multiple REST hostnames. We try them in order so a
+# temporary regional/network issue does not make every market card fail.
+BINANCE_HOSTS = [
+    "https://api.binance.com",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+    "https://api4.binance.com",
+    "https://data-api.binance.vision",
+]
+
+def get_24hr(symbol):
+    last_error = None
+    for host in BINANCE_HOSTS:
+        try:
+            r = requests.get(
+                f"{host}/api/v3/ticker/24hr",
+                params={"symbol": symbol},
+                timeout=8,
+                headers={"User-Agent": "NEXUS-AI-CFO/1.0"},
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "lastPrice" in data:
+                return data
+            last_error = f"Unexpected response from {host}"
+        except Exception as e:
+            last_error = f"{host}: {e}"
+    raise RuntimeError(last_error or "All Binance market endpoints failed")
 
 @st.cache_data(ttl=15)
-def ticker(symbol):
-    r = requests.get(f"{BINANCE_API}/api/v3/ticker/24hr", params={"symbol": symbol}, timeout=10)
-    r.raise_for_status()
-    return r.json()
+def market_snapshot(symbol):
+    return get_24hr(symbol)
 
-def fmt_price(x):
-    return f"${float(x):,.2f}"
+def price_text(value):
+    value = float(value)
+    if value >= 100:
+        return f"${value:,.2f}"
+    if value >= 1:
+        return f"${value:,.4f}"
+    return f"${value:,.6f}"
 
 st.title("₿ NEXUS AI CFO")
 st.caption("Binance Agentic MCP-ready crypto CFO dashboard")
 
-st.sidebar.header("Binance Agentic MCP")
-st.sidebar.success("MCP endpoint configured")
-st.sidebar.code(BINANCE_MCP, language="text")
-st.sidebar.markdown(
-    "This app is **MCP-ready**. Binance authentication/consent must be completed "
-    "through a supported AI client or Binance-supported integration flow."
-)
+with st.sidebar:
+    st.header("Binance Agentic MCP")
+    st.success("MCP endpoint configured")
+    st.code(BINANCE_MCP, language="text")
+    st.caption("MCP authentication is completed through Binance-supported client/integration flows.")
+    st.divider()
+    st.subheader("Safety Policy")
+    st.write("✓ Market-data reads")
+    st.write("✓ Confirmation before write actions")
+    st.write("✗ Withdrawals")
+    st.write("✗ Automatic trading in this build")
 
-st.warning(
-    "Important: Binance's Agentic MCP is not a normal public REST endpoint. "
-    "Do not paste the MCP URL into a browser or into a generic chat. "
-    "Connect it through a supported AI client/integration and complete Binance consent."
+st.info(
+    "Binance Agentic MCP is an authenticated MCP service, not a normal REST URL. "
+    "This dashboard does not collect Binance passwords or API secrets."
 )
 
 st.subheader("Live Market Snapshot")
+
+symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
 cols = st.columns(4)
-for col, symbol in zip(cols, ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]):
-    try:
-        d = ticker(symbol)
-        change = float(d["priceChangePercent"])
-        col.metric(symbol, fmt_price(d["lastPrice"]), f"{change:+.2f}%")
-    except Exception:
-        col.metric(symbol, "Unavailable")
+market_errors = []
+
+for col, symbol in zip(cols, symbols):
+    with col:
+        try:
+            d = market_snapshot(symbol)
+            last = float(d["lastPrice"])
+            change = float(d["priceChangePercent"])
+            col.metric(symbol, price_text(last), f"{change:+.2f}%")
+        except Exception as e:
+            market_errors.append(f"{symbol}: {e}")
+            col.metric(symbol, "Unavailable")
+
+if market_errors:
+    with st.expander("Market-data diagnostics"):
+        for err in market_errors:
+            st.write("• " + err)
+else:
+    st.success("Binance public market data connected.")
 
 st.divider()
 
@@ -48,12 +97,15 @@ left, right = st.columns(2)
 
 with left:
     st.subheader("NEXUS Risk Engine")
-    st.write("Use the CFO engine to evaluate:")
-    st.write("• Portfolio concentration")
-    st.write("• Market volatility")
-    st.write("• Stablecoin/cash buffer")
-    st.write("• Position and leverage risk")
-    st.write("• Suggested risk controls")
+    st.write("Portfolio intelligence checks:")
+    for item in [
+        "Portfolio concentration",
+        "Market volatility",
+        "Stablecoin / cash buffer",
+        "Position and leverage risk",
+        "Suggested risk controls",
+    ]:
+        st.write("• " + item)
 
     risk = st.slider("Demo portfolio risk score", 0, 100, 42)
     if risk < 35:
@@ -72,33 +124,26 @@ with right:
     st.checkbox("Require confirmation before every write action", value=True, disabled=True)
 
     st.info(
-        "For the first deployment, keep Account/Trade/Transfer disabled until "
-        "the Binance Agentic MCP connection is verified."
+        "Keep trading and transfers disabled for the first deployment. "
+        "Enable only after the official Binance Agentic MCP connection is verified."
     )
 
 st.divider()
-st.subheader("How the final agent flow works")
-
+st.subheader("NEXUS Agent Flow")
 st.code(
 """User
   ↓
 NEXUS AI CFO Web UI
   ↓
-NEXUS Decision / Risk Engine
+Risk / Decision Engine
   ↓
 Binance Agentic MCP
   ↓
 Binance Agentic Sub-account
   ↓
-Read data → analyze → ask confirmation → execute (only if authorized)
+Read → Analyze → Confirm → Execute (only when authorized)
 """,
 language="text",
 )
 
-st.markdown(
-    "**Safety:** This web build does not place Binance orders by itself. "
-    "Binance's Agentic MCP is designed so non-read actions require user confirmation, "
-    "and there is no withdrawal scope."
-)
-
-st.caption("NEXUS AI CFO • MCP integration scaffold • Read-first deployment")
+st.caption("NEXUS AI CFO • Binance Agentic MCP edition • Read-first deployment")
